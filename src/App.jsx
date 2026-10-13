@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Dices, RotateCw, Sparkles, Swords, Trophy, X, ClipboardPlus, Crown, Flame, Trash2 } from 'lucide-react'
+import { Dices, RotateCw, Sparkles, Swords, Trophy, X, ClipboardPlus, Crown, Flame, Trash2, Cloud, RefreshCw } from 'lucide-react'
 import { heroCatalog, heroTotal, lanePools } from './constants/heroCatalog'
+import { deleteRoomRecord, fetchRoomRecords, readCloudConfig, saveCloudConfig, saveRoomRecord } from './lib/supabaseRoom'
 
 const lanes = [
   { id: 'clash', label: '对抗路', short: '对抗', icon: '⚔', color: '#e57d53' }, { id: 'jungle', label: '打野', short: '打野', icon: '✦', color: '#8478d4' }, { id: 'mid', label: '中路', short: '中路', icon: '◇', color: '#d66caa' }, { id: 'farm', label: '发育路', short: '发育', icon: '➶', color: '#e9a936' }, { id: 'roam', label: '游走', short: '游走', icon: '◈', color: '#43aeb0' },
@@ -22,10 +23,12 @@ export default function App() {
   const [players, setPlayers] = useState(initialBoard.players?.length === 5 ? initialBoard.players : teamSlots)
   const [records, setRecords] = useState(initialBoard.records || [])
   const [scoreForm, setScoreForm] = useState({ playerId: 'clash', result: 'win', rating: '12', hero: '' })
+  const [cloud, setCloud] = useState(readCloudConfig); const [cloudStatus, setCloudStatus] = useState('本地模式')
   const selected = lanes.find((item) => item.id === lane); const pool = lanePools[lane]; const [candidates, setCandidates] = useState(() => makeCandidates(lanePools.clash, lanePools.clash[0])); const slices = candidates.length
   useEffect(() => () => clearTimeout(timer.current), [])
   useEffect(() => { setCandidates(makeCandidates(pool, pool[0])); setPicked('') }, [lane])
   useEffect(() => { localStorage.setItem(storageKey, JSON.stringify({ players, records })) }, [players, records])
+  useEffect(() => { if (!cloud.url || !cloud.key || !cloud.roomCode) return undefined; const timerId = setInterval(() => syncRecords(false), 12000); syncRecords(false); return () => clearInterval(timerId) }, [cloud.url, cloud.key, cloud.roomCode])
   const wheelStyle = useMemo(() => { const part = 360 / slices; const stops = candidates.map((_, i) => `${i % 2 ? '#f3ead9' : '#fff9ef'} ${i * part}deg ${(i + 1) * part}deg`).join(', '); return { background: `conic-gradient(from -${part / 2}deg, ${stops})`, transform: `rotate(${rotation}deg)` } }, [candidates, rotation, slices])
   function spin() { if (spinning) return; const name = pool[Math.floor(Math.random() * pool.length)]; const nextCandidates = makeCandidates(pool, name); const winner = nextCandidates.indexOf(name); const part = 360 / nextCandidates.length; const landing = 360 - winner * part; setCandidates(nextCandidates); setPicked(''); setSpinning(true); setRotation(current => current + 2160 + landing - (current % 360)); timer.current = setTimeout(() => { setPicked(name); setHistory(items => [{ name, lane: selected.short }, ...items].slice(0, 4)); setSpinning(false) }, 4200) }
   const stats = players.map(player => {
@@ -37,8 +40,10 @@ export default function App() {
   }).sort((a, b) => b.score - a.score)
   const best = stats.find(player => player.games); const needsHelp = [...stats].reverse().find(player => player.games)
   function updatePlayer(id, name) { setPlayers(items => items.map(player => player.id === id ? { ...player, name: name.trim() || teamSlots.find(slot => slot.id === id).name } : player)) }
-  function addRecord(event) { event.preventDefault(); const rating = Math.max(0, Math.min(16, Number(scoreForm.rating))); if (Number.isNaN(rating)) return; setRecords(items => [{ id: `${Date.now()}`, ...scoreForm, rating, hero: scoreForm.hero.trim(), createdAt: Date.now() }, ...items]); setScoreForm(form => ({ ...form, hero: '', rating: '12' })) }
-  function removeRecord(id) { setRecords(items => items.filter(item => item.id !== id)) }
+  async function syncRecords(showStatus = true) { try { const rows = await fetchRoomRecords(cloud); setRecords(rows.map(row => ({ id: row.id, playerId: row.player_id, result: row.result, rating: Number(row.rating), hero: row.hero || '', createdAt: new Date(row.played_at).getTime() }))); setCloudStatus(`房间 ${cloud.roomCode} · 已同步`); } catch (error) { if (showStatus) setCloudStatus(error.message) } }
+  function connectCloud(event) { event.preventDefault(); saveCloudConfig(cloud); if (cloud.url && cloud.key && cloud.roomCode) syncRecords(); else setCloudStatus('本地模式') }
+  async function addRecord(event) { event.preventDefault(); const rating = Math.max(0, Math.min(16, Number(scoreForm.rating))); if (Number.isNaN(rating)) return; const record = { id: `${Date.now()}`, ...scoreForm, rating, hero: scoreForm.hero.trim(), createdAt: Date.now() }; try { if (cloud.url && cloud.key && cloud.roomCode) { await saveRoomRecord(cloud, record); await syncRecords(false) } else setRecords(items => [record, ...items]); setScoreForm(form => ({ ...form, hero: '', rating: '12' })) } catch (error) { setCloudStatus(error.message) } }
+  async function removeRecord(id) { try { if (cloud.url && cloud.key && cloud.roomCode) { await deleteRoomRecord(cloud, id); await syncRecords(false) } else setRecords(items => items.filter(item => item.id !== id)) } catch (error) { setCloudStatus(error.message) } }
   return <main className="app-shell" style={{ '--lane': selected.color }}>
     <div className="ambient ambient-one" /><div className="ambient ambient-two" />
     <header className="topbar"><div className="brand"><div className="brand-mark"><Swords size={22} /></div><div><strong>峡谷命运局</strong><span>GLORY DRAFT</span></div></div><div className="status"><span className="status-dot" />今日适合上分</div></header>
@@ -50,6 +55,7 @@ export default function App() {
     </section>
     {picked && <div className="result-toast"><div className="result-icon">{picked.slice(0, 1)}</div><div><span>本局英雄已锁定</span><b>{picked}</b></div><button onClick={() => setPicked('')}><X size={17} /></button></div>}
     <section className="scoreboard">
+      <form className="cloud-bar" onSubmit={connectCloud}><div className="cloud-title"><Cloud size={17} /><b>共享房间</b><span>{cloudStatus}</span></div><input placeholder="Supabase Project URL" value={cloud.url} onChange={event => setCloud(item => ({ ...item, url: event.target.value }))} /><input placeholder="anon public key" value={cloud.key} onChange={event => setCloud(item => ({ ...item, key: event.target.value }))} /><input className="room-code" placeholder="房间码，如 WZRY-8K2M" value={cloud.roomCode} onChange={event => setCloud(item => ({ ...item, roomCode: event.target.value.toUpperCase().replace(/\s/g, '') }))} /><button type="submit">连接房间</button><button type="button" title="立即同步" onClick={() => syncRecords()}><RefreshCw size={16} /></button></form>
       <div className="scoreboard-heading"><div><p className="eyebrow"><ClipboardPlus size={15} /> 五排战绩评分</p><h2>最近 10 局，谁在 <em>带飞？</em></h2><p>由战绩记录员手动填写每局胜负与游戏内评分（最高 16 分）。综合分 = 平均评分 ÷ 16 × 80 + 胜率 × 20。</p></div><div className="score-legend"><span><Crown size={15} />{best ? `本周 C 位：${best.name}` : '等待首局战绩'}</span><span><Flame size={15} />仅统计每人最近 10 局</span></div></div>
       <div className="score-grid">
         <form className="score-form" onSubmit={addRecord}><h3>登记一局</h3><label>队友<select value={scoreForm.playerId} onChange={event => setScoreForm(form => ({ ...form, playerId: event.target.value }))}>{players.map(player => <option key={player.id} value={player.id}>{player.lane} · {player.name}</option>)}</select></label><label>本局结果<div className="result-switch"><button type="button" className={scoreForm.result === 'win' ? 'chosen win' : ''} onClick={() => setScoreForm(form => ({ ...form, result: 'win' }))}>胜利</button><button type="button" className={scoreForm.result === 'loss' ? 'chosen loss' : ''} onClick={() => setScoreForm(form => ({ ...form, result: 'loss' }))}>失败</button></div></label><label>游戏内评分（0–16）<input type="number" min="0" max="16" step="0.1" value={scoreForm.rating} onChange={event => setScoreForm(form => ({ ...form, rating: event.target.value }))} required /></label><label>本局英雄（可选）<input placeholder="如：铠" value={scoreForm.hero} onChange={event => setScoreForm(form => ({ ...form, hero: event.target.value }))} /></label><button className="save-score" type="submit"><ClipboardPlus size={17} />保存本局战绩</button></form>
