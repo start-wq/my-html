@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Dices, RotateCw, Sparkles, Swords, Trophy, X } from 'lucide-react'
+import { Dices, RotateCw, Sparkles, Swords, Trophy, X, ClipboardPlus, Crown, Flame, Trash2 } from 'lucide-react'
 import { heroCatalog, heroTotal, lanePools } from './constants/heroCatalog'
 
 const lanes = [
   { id: 'clash', label: '对抗路', short: '对抗', icon: '⚔', color: '#e57d53' }, { id: 'jungle', label: '打野', short: '打野', icon: '✦', color: '#8478d4' }, { id: 'mid', label: '中路', short: '中路', icon: '◇', color: '#d66caa' }, { id: 'farm', label: '发育路', short: '发育', icon: '➶', color: '#e9a936' }, { id: 'roam', label: '游走', short: '游走', icon: '◈', color: '#43aeb0' },
 ]
 const avatarColors = ['#3e759d', '#bd6b4b', '#6d7f4c', '#7f5fb2']
+const teamSlots = [
+  { id: 'clash', lane: '对抗路', name: '对抗路队友' }, { id: 'jungle', lane: '打野', name: '打野队友' }, { id: 'mid', lane: '中路', name: '中路队友' }, { id: 'farm', lane: '发育路', name: '发育路队友' }, { id: 'roam', lane: '游走', name: '游走队友' },
+]
+const storageKey = 'glory-draft-scoreboard-v1'
+const readScoreboard = () => { try { return JSON.parse(localStorage.getItem(storageKey)) || { players: teamSlots, records: [] } } catch { return { players: teamSlots, records: [] } } }
 const makeCandidates = (all, winner) => {
   const others = all.filter((hero) => hero !== winner).sort(() => Math.random() - .5).slice(0, 11)
   return [winner, ...others].sort(() => Math.random() - .5)
@@ -13,11 +18,27 @@ const makeCandidates = (all, winner) => {
 
 export default function App() {
   const [lane, setLane] = useState('clash'); const [rotation, setRotation] = useState(0); const [spinning, setSpinning] = useState(false); const [picked, setPicked] = useState(''); const [history, setHistory] = useState([]); const timer = useRef(null)
+  const initialBoard = useMemo(readScoreboard, [])
+  const [players, setPlayers] = useState(initialBoard.players?.length === 5 ? initialBoard.players : teamSlots)
+  const [records, setRecords] = useState(initialBoard.records || [])
+  const [scoreForm, setScoreForm] = useState({ playerId: 'clash', result: 'win', rating: '8', hero: '' })
   const selected = lanes.find((item) => item.id === lane); const pool = lanePools[lane]; const [candidates, setCandidates] = useState(() => makeCandidates(lanePools.clash, lanePools.clash[0])); const slices = candidates.length
   useEffect(() => () => clearTimeout(timer.current), [])
   useEffect(() => { setCandidates(makeCandidates(pool, pool[0])); setPicked('') }, [lane])
+  useEffect(() => { localStorage.setItem(storageKey, JSON.stringify({ players, records })) }, [players, records])
   const wheelStyle = useMemo(() => { const part = 360 / slices; const stops = candidates.map((_, i) => `${i % 2 ? '#f3ead9' : '#fff9ef'} ${i * part}deg ${(i + 1) * part}deg`).join(', '); return { background: `conic-gradient(from -${part / 2}deg, ${stops})`, transform: `rotate(${rotation}deg)` } }, [candidates, rotation, slices])
   function spin() { if (spinning) return; const name = pool[Math.floor(Math.random() * pool.length)]; const nextCandidates = makeCandidates(pool, name); const winner = nextCandidates.indexOf(name); const part = 360 / nextCandidates.length; const landing = 360 - winner * part; setCandidates(nextCandidates); setPicked(''); setSpinning(true); setRotation(current => current + 2160 + landing - (current % 360)); timer.current = setTimeout(() => { setPicked(name); setHistory(items => [{ name, lane: selected.short }, ...items].slice(0, 4)); setSpinning(false) }, 4200) }
+  const stats = players.map(player => {
+    const latest = records.filter(record => record.playerId === player.id).slice(0, 10)
+    const games = latest.length; const wins = latest.filter(record => record.result === 'win').length
+    const average = games ? latest.reduce((sum, record) => sum + Number(record.rating), 0) / games : 0
+    const score = games ? average * 8 + (wins / games) * 20 : 0
+    return { ...player, games, wins, average, score }
+  }).sort((a, b) => b.score - a.score)
+  const best = stats.find(player => player.games); const needsHelp = [...stats].reverse().find(player => player.games)
+  function updatePlayer(id, name) { setPlayers(items => items.map(player => player.id === id ? { ...player, name: name.trim() || teamSlots.find(slot => slot.id === id).name } : player)) }
+  function addRecord(event) { event.preventDefault(); const rating = Math.max(0, Math.min(10, Number(scoreForm.rating))); if (Number.isNaN(rating)) return; setRecords(items => [{ id: `${Date.now()}`, ...scoreForm, rating, hero: scoreForm.hero.trim(), createdAt: Date.now() }, ...items]); setScoreForm(form => ({ ...form, hero: '', rating: '8' })) }
+  function removeRecord(id) { setRecords(items => items.filter(item => item.id !== id)) }
   return <main className="app-shell" style={{ '--lane': selected.color }}>
     <div className="ambient ambient-one" /><div className="ambient ambient-two" />
     <header className="topbar"><div className="brand"><div className="brand-mark"><Swords size={22} /></div><div><strong>峡谷命运局</strong><span>GLORY DRAFT</span></div></div><div className="status"><span className="status-dot" />今日适合上分</div></header>
@@ -28,5 +49,13 @@ export default function App() {
       <aside className="record-panel"><div className="panel-title"><span>03</span><div><h2>本局战令</h2><p>随机结果记录</p></div></div>{history.length ? <div className="history">{history.map((item, i) => <div className="history-item" key={`${item.name}-${i}`}><div className="hero-avatar" style={{ '--avatar': avatarColors[i] }}>{item.name.slice(0, 1)}</div><div><b>{item.name}</b><span>{item.lane}</span></div><small>#{String(history.length - i).padStart(2, '0')}</small></div>)}</div> : <div className="empty-record"><Trophy size={34} /><p>转动一次<br />开启你的峡谷之旅</p></div>}<div className="record-footer"><span>今日已抽取</span><b>{history.length} 次</b></div></aside>
     </section>
     {picked && <div className="result-toast"><div className="result-icon">{picked.slice(0, 1)}</div><div><span>本局英雄已锁定</span><b>{picked}</b></div><button onClick={() => setPicked('')}><X size={17} /></button></div>}
+    <section className="scoreboard">
+      <div className="scoreboard-heading"><div><p className="eyebrow"><ClipboardPlus size={15} /> 五排战绩评分</p><h2>最近 10 局，谁在 <em>带飞？</em></h2><p>由战绩记录员手动填写每局胜负与游戏内评分。综合分 = 平均评分 × 8 + 胜率 × 20。</p></div><div className="score-legend"><span><Crown size={15} />{best ? `本周 C 位：${best.name}` : '等待首局战绩'}</span><span><Flame size={15} />仅统计每人最近 10 局</span></div></div>
+      <div className="score-grid">
+        <form className="score-form" onSubmit={addRecord}><h3>登记一局</h3><label>队友<select value={scoreForm.playerId} onChange={event => setScoreForm(form => ({ ...form, playerId: event.target.value }))}>{players.map(player => <option key={player.id} value={player.id}>{player.lane} · {player.name}</option>)}</select></label><label>本局结果<div className="result-switch"><button type="button" className={scoreForm.result === 'win' ? 'chosen win' : ''} onClick={() => setScoreForm(form => ({ ...form, result: 'win' }))}>胜利</button><button type="button" className={scoreForm.result === 'loss' ? 'chosen loss' : ''} onClick={() => setScoreForm(form => ({ ...form, result: 'loss' }))}>失败</button></div></label><label>游戏内评分（0–10）<input type="number" min="0" max="10" step="0.1" value={scoreForm.rating} onChange={event => setScoreForm(form => ({ ...form, rating: event.target.value }))} required /></label><label>本局英雄（可选）<input placeholder="如：铠" value={scoreForm.hero} onChange={event => setScoreForm(form => ({ ...form, hero: event.target.value }))} /></label><button className="save-score" type="submit"><ClipboardPlus size={17} />保存本局战绩</button></form>
+        <div className="rank-list"><div className="rank-title"><h3>五排状态榜</h3><span>总记录 {records.length} 局</span></div>{stats.map((player, index) => <article className={`rank-card ${player.id === best?.id ? 'best' : ''} ${player.id === needsHelp?.id && player.games ? 'help' : ''}`} key={player.id}><div className="rank-number">{String(index + 1).padStart(2, '0')}</div><div className="player-info"><input aria-label={`${player.lane}玩家名称`} value={player.name} onChange={event => updatePlayer(player.id, event.target.value)} /><span>{player.lane} · {player.games ? `${player.games} 局 · 胜率 ${Math.round(player.wins / player.games * 100)}%` : '暂无战绩'}</span></div><div className="player-score"><b>{player.games ? player.score.toFixed(1) : '—'}</b><small>综合分</small></div>{player.id === best?.id && <Crown className="rank-badge crown" size={16} />}{player.id === needsHelp?.id && player.id !== best?.id && <span className="help-badge">需要带飞</span>}</article>)}</div>
+      </div>
+      {records.length > 0 && <div className="recent-records"><div><h3>最近登记</h3><p>删除错误录入后，排行榜会立即重新计算。</p></div><div className="record-chips">{records.slice(0, 10).map(record => { const player = players.find(item => item.id === record.playerId); return <span className={record.result} key={record.id}><b>{player?.name}</b> {record.result === 'win' ? '胜' : '负'} · {record.rating} 分{record.hero ? ` · ${record.hero}` : ''}<button aria-label="删除此条战绩" onClick={() => removeRecord(record.id)}><Trash2 size={12} /></button></span> })}</div></div>}
+    </section>
   </main>
 }
