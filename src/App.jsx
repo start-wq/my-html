@@ -11,6 +11,7 @@ const teamSlots = [
   { id: 'clash', lane: '对抗路', name: '对抗路队友' }, { id: 'jungle', lane: '打野', name: '打野队友' }, { id: 'mid', lane: '中路', name: '中路队友' }, { id: 'farm', lane: '发育路', name: '发育路队友' }, { id: 'roam', lane: '游走', name: '游走队友' },
 ]
 const scoreInputLabels = { clash: '对抗', jungle: '打野', mid: '中单', farm: '发育', roam: '辅助' }
+const penaltyAmounts = Array.from({ length: 10 }, (_, index) => (index + 1) / 100)
 const storageKey = 'glory-draft-scoreboard-v1'
 const readScoreboard = () => { try { return JSON.parse(localStorage.getItem(storageKey)) || { players: teamSlots, records: [] } } catch { return { players: teamSlots, records: [] } } }
 const makeCandidates = (all, winner) => {
@@ -19,19 +20,21 @@ const makeCandidates = (all, winner) => {
 }
 
 export default function App() {
-  const [lane, setLane] = useState('clash'); const [rotation, setRotation] = useState(0); const [spinning, setSpinning] = useState(false); const [picked, setPicked] = useState(''); const [history, setHistory] = useState([]); const timer = useRef(null)
+  const [lane, setLane] = useState('clash'); const [rotation, setRotation] = useState(0); const [spinning, setSpinning] = useState(false); const [picked, setPicked] = useState(''); const [history, setHistory] = useState([]); const timer = useRef(null); const penaltyTimer = useRef(null)
+  const [penaltyRotation, setPenaltyRotation] = useState(0); const [penaltySpinning, setPenaltySpinning] = useState(false); const [penalty, setPenalty] = useState(null)
   const initialBoard = useMemo(readScoreboard, [])
   const [players, setPlayers] = useState(initialBoard.players?.length === 5 ? initialBoard.players : teamSlots)
   const [records, setRecords] = useState(initialBoard.records || [])
   const [scoreForm, setScoreForm] = useState({ result: 'win', ratings: { clash: '', jungle: '', mid: '', farm: '', roam: '' } })
   const [cloud, setCloud] = useState(readCloudConfig); const [cloudStatus, setCloudStatus] = useState('本地模式')
   const selected = lanes.find((item) => item.id === lane); const pool = lanePools[lane]; const [candidates, setCandidates] = useState(() => makeCandidates(lanePools.clash, lanePools.clash[0])); const slices = candidates.length
-  useEffect(() => () => clearTimeout(timer.current), [])
+  useEffect(() => () => { clearTimeout(timer.current); clearTimeout(penaltyTimer.current) }, [])
   useEffect(() => { setCandidates(makeCandidates(pool, pool[0])); setPicked('') }, [lane])
   useEffect(() => { localStorage.setItem(storageKey, JSON.stringify({ players, records })) }, [players, records])
   useEffect(() => { if (!cloud.url || !cloud.key || !cloud.roomCode) return undefined; const timerId = setInterval(() => syncRecords(false), 12000); syncRecords(false); return () => clearInterval(timerId) }, [cloud.url, cloud.key, cloud.roomCode])
   const wheelStyle = useMemo(() => { const part = 360 / slices; const stops = candidates.map((_, i) => `${i % 2 ? '#f3ead9' : '#fff9ef'} ${i * part}deg ${(i + 1) * part}deg`).join(', '); return { background: `conic-gradient(from -${part / 2}deg, ${stops})`, transform: `rotate(${rotation}deg)` } }, [candidates, rotation, slices])
   function spin() { if (spinning) return; const name = pool[Math.floor(Math.random() * pool.length)]; const nextCandidates = makeCandidates(pool, name); const winner = nextCandidates.indexOf(name); const part = 360 / nextCandidates.length; const landing = 360 - winner * part; setCandidates(nextCandidates); setPicked(''); setSpinning(true); setRotation(current => current + 2160 + landing - (current % 360)); timer.current = setTimeout(() => { setPicked(name); setHistory(items => [{ name, lane: selected.short }, ...items].slice(0, 4)); setSpinning(false) }, 4200) }
+  function spinPenalty() { if (penaltySpinning) return; const winner = Math.floor(Math.random() * penaltyAmounts.length); const part = 360 / penaltyAmounts.length; const landing = 360 - winner * part; setPenalty(null); setPenaltySpinning(true); setPenaltyRotation(current => current + 1800 + landing - (current % 360)); penaltyTimer.current = setTimeout(() => { setPenalty(penaltyAmounts[winner]); setPenaltySpinning(false) }, 3200) }
   const stats = players.map(player => {
     const latest = records.filter(record => record.playerId === player.id).slice(0, 10)
     const games = latest.length; const wins = latest.filter(record => record.result === 'win').length
@@ -75,5 +78,6 @@ export default function App() {
       </div>
       {records.length > 0 && <div className="recent-records"><div><h3>最近登记</h3><p>删除错误录入后，排行榜会立即重新计算。</p></div><div className="record-chips">{records.slice(0, 10).map(record => { const player = players.find(item => item.id === record.playerId); return <span className={record.result} key={record.id}><b>{player?.name}</b> {record.result === 'win' ? '胜' : '负'} · {record.rating} 分{record.hero ? ` · ${record.hero}` : ''}<button aria-label="删除此条战绩" onClick={() => removeRecord(record.id)}><Trash2 size={12} /></button></span> })}</div></div>}
     </section>
+    <section className="penalty-panel"><div><p className="eyebrow"><Dices size={15} /> 趣味惩罚池</p><h2>来一把 <em>惩罚转盘</em></h2><p>金额范围 0.01–0.10 元，仅供车队娱乐。</p><button className="penalty-button" onClick={spinPenalty} disabled={penaltySpinning}><RotateCw size={18} />{penaltySpinning ? '惩罚抽取中...' : '抽取惩罚金额'}</button>{penalty !== null && <strong className="penalty-result">本次惩罚：¥ {penalty.toFixed(2)}</strong>}</div><div className="penalty-wheel-stage"><div className="penalty-pointer" /><div className="penalty-wheel" style={{ transform: `rotate(${penaltyRotation}deg)` }}>{penaltyAmounts.map((amount, index) => { const angle = index * 36; return <span key={amount} style={{ transform: `rotate(${angle}deg)` }}><b style={{ transform: `rotate(${-angle}deg)` }}>¥{amount.toFixed(2)}</b></span> })}<i>罚</i></div></div></section>
   </main>
 }
