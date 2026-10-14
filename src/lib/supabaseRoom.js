@@ -27,3 +27,5 @@ const request = async (config, path, options = {}) => {
 export const fetchRoomRecords = (config) => request(config, `match_records?room_code=eq.${encodeURIComponent(config.roomCode)}&order=played_at.desc`)
 export const saveRoomRecord = (config, record) => request(config, 'match_records', { method: 'POST', body: JSON.stringify({ room_code: config.roomCode, player_id: record.playerId, result: record.result, rating: record.rating, hero: record.hero || null, played_at: new Date().toISOString() }) })
 export const deleteRoomRecord = (config, id) => request(config, `match_records?id=eq.${encodeURIComponent(id)}&room_code=eq.${encodeURIComponent(config.roomCode)}`, { method: 'DELETE' })
+export const fetchPenaltyDraws = (config) => request(config, `penalty_draws?room_code=eq.${encodeURIComponent(config.roomCode)}&order=drawn_at.desc&limit=5`)
+export const savePenaltyDraw = (config, amount) => request(config, 'penalty_draws', { method: 'POST', body: JSON.stringify({ room_code: config.roomCode, amount }) })
